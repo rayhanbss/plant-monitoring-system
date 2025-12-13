@@ -1,3 +1,2 @@
-./raw-data-consumer/node_modules
-./raw-data-consumer/node_modules/*
-./raw-data-consumer/package-lock.json
+raw-data-consumer/node_modules/
+raw-data-consumer/package-lock.json
