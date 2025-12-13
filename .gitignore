@@ -1,3 +1,6 @@
 raw-data-consumer/node_modules/
 raw-data-consumer/package-lock.json
 venv
+/weather-api/.env
+/weather-api/node_modules/
+/weather-api/package-lock.json
