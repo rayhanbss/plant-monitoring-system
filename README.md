@@ -9,3 +9,6 @@
 ## ✨ Features
 
 ## 🧑‍💻 Collaborators
+
+| [<img src="https://github.com/FredyRamadhan.png" width="100px"><br><sub><b>Fredy Tri Ramadhan</b></sub>](https://github.com/FredyRamadhan) | [<img src="https://github.com/rayhanbss.png" width="100px"><br><sub><b>Rayhan Bagus Sadewa</b></sub>](https://github.com/rayhanbss) | [<img src="https://github.com/rakaaleandra.png" width="100px"><br><sub><b>Raka Aleandra</b></sub>](https://github.com/rakaaleandra) |
+| :---: | :---: | :---: |
