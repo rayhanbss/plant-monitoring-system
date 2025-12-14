@@ -4,7 +4,8 @@ dotenv.config();
 
 const kafka = new Kafka({ 
   clientId: 'weather-producer', 
-  brokers: ['localhost:9092'] 
+  brokers: ['kafka:9092'],
+  logLevel: 1
 });
 
 const producer = kafka.producer();
@@ -46,12 +47,21 @@ async function fetchAndProduce() {
     const rawData = await response.json();
     const flatRow = flattenWeatherData(rawData);
 
-    // console.table(flatRow); 
+    console.table(flatRow); 
+
+    const kafkaMessage = {
+      source: "weather-api",
+      topic: "weather-api-topic",
+      payload: JSON.stringify(flatRow),
+      timestamp: Date.now() / 1000
+    };
 
     await producer.send({
       topic: 'weather-api-topic',
-      messages: [ { value: JSON.stringify(flatRow) } ],
+      messages: [ { value: JSON.stringify(kafkaMessage) } ],
     });
+
+    console.log('✓ Sent to Kafka');
     
   } catch (error) {
     console.error('Error:', error.message);

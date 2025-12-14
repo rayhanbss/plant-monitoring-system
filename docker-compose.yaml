@@ -16,24 +16,54 @@ services:
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  emqx:
-    image: emqx/emqx-enterprise:5.3.0-full
+  cassandra:
+    image: cassandra:4.1
     ports:
-      - "1883:1883"
-      - "18083:18083"
+      - "9042:9042"
+    environment:
+      CASSANDRA_CLUSTER_NAME: "PlantMonitoringCluster"
+      CASSANDRA_NUM_TOKENS: 256
+      CASSANDRA_START_RPC: "true"
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
+  # emqx:
+  #   image: emqx/emqx-enterprise:5.3.0-full
+  #   ports:
+  #     - "1883:1883"
+  #     - "18083:18083"
 
-  mqtt-producer:
-    build: ./mqtt-producer
+  mqtt-kafka-bridge:
+    build: ./mqtt-kafka-bridge
     depends_on:
-      - emqx
+      - kafka
+    restart: unless-stopped
+    env_file:
+      - ./mqtt-kafka-bridge/.env
+    environment:
+      - PYTHONUNBUFFERED=1
 
   raw-data-consumer:
     build: ./raw-data-consumer
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
+
   weather-api:
     build: ./weather-api
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
+    env_file:
+      - ./weather-api/.env
+    environment:
+      - NODE_OPTIONS=--dns-result-order=ipv4first
