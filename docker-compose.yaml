@@ -33,3 +33,7 @@ services:
     build: ./raw-data-consumer
     depends_on:
       - kafka
+  weather-api:
+    build: ./weather-api
+    depends_on:
+      - kafka
