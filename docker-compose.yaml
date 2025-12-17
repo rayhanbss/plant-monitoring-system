@@ -35,6 +35,17 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+  
+  # Spark Batch Learning Container (For Training Only)
+  # spark-batch-learning:
+  #   build: ./spark-batch-learning
+  #   depends_on:
+  #     cassandra:
+  #       condition: service_healthy
+  #   command: >
+  #     spark-submit
+  #     --packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1
+  #     app.py
 
   # emqx:
   #   image: emqx/emqx-enterprise:5.3.0-full
@@ -56,6 +67,8 @@ services:
     build: ./raw-data-consumer
     depends_on:
       kafka:
+        condition: service_healthy
+      cassandra:
         condition: service_healthy
 
   weather-api:
