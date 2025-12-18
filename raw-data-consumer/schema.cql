@@ -8,8 +8,8 @@ WITH replication = {
 USE plant_monitoring;
 
 -- Uncomment after change scheme
--- DROP TABLE sensor_data;
--- DROP TABLE weather_data;
+DROP TABLE sensor_data;
+DROP TABLE weather_data;
 
 
 -- Sensor readings table (time-series data)
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS sensor_data (
     soil_moisture float,
     light_level float,
     status text,
-    duration int,
+    duration float,
     PRIMARY KEY (device_id, timestamp)
 ) WITH CLUSTERING ORDER BY (timestamp DESC)
 AND default_time_to_live = 2592000;  -- 30 days TTL
