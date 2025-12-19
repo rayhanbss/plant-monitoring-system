@@ -2,16 +2,16 @@ import dotenv from 'dotenv';
 import { Kafka } from 'kafkajs';
 dotenv.config();
 
+
 const kafka = new Kafka({ 
   clientId: 'weather-producer', 
-  brokers: ['kafka:9092'],
-  logLevel: 1
+  brokers: [process.env.KAFKA_BROKER || 'kafka:9092'] 
 });
 
 const producer = kafka.producer();
 
-const lat = -7.557091;
-const lon = 110.843809;
+const lat = process.env.LAT || -7.557091;
+const lon = process.env.LON || 110.843809;
 const api_key = process.env.OPENWEATHER_API_KEY;
 
 let isRunning = false;
@@ -47,7 +47,7 @@ async function fetchAndProduce() {
     const rawData = await response.json();
     const flatRow = flattenWeatherData(rawData);
 
-    console.table(flatRow); 
+    // console.table(flatRow); 
 
     const kafkaMessage = {
       source: "weather-api",
@@ -61,7 +61,7 @@ async function fetchAndProduce() {
       messages: [ { value: JSON.stringify(kafkaMessage) } ],
     });
 
-    console.log('✓ Sent to Kafka');
+    console.log('Sent to Kafka');
     
   } catch (error) {
     console.error('Error:', error.message);
