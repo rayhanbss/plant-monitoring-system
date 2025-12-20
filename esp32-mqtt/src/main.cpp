@@ -14,12 +14,12 @@
 const char *ssid = "A2-0620";
 const char *password = "12345678";
 
-const char *mqtt_broker = "";
-const char *topic = "";
-const char *mqtt_username = "";
-const char *mqtt_password = "";
-const char *client_id = "";
-const int mqtt_port = ;
+const char *mqtt_broker = "192.168.1.3";
+const char *topic = "emqx/esp32";
+const char *mqtt_username = "esp32monitoring";
+const char *mqtt_password = "JemBud111";
+const char *client_id = "esp32_client";
+const int mqtt_port = 8884;
 
 WiFiClientSecure espClient;
 PubSubClient client(espClient);
