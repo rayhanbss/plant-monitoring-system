@@ -8,8 +8,8 @@ WITH replication = {
 USE plant_monitoring;
 
 -- Uncomment after change scheme
-DROP TABLE sensor_data;
-DROP TABLE weather_data;
+-- DROP TABLE sensor_data;
+-- DROP TABLE weather_data;
 
 
 -- Sensor readings table (time-series data)
