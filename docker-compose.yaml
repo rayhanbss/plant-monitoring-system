@@ -1,27 +1,5 @@
 services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-
-  kafka:
-    image: confluentinc/cp-kafka:7.5.0
-    depends_on:
-      - zookeeper
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-    healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
+  # NoSQL Database Container
   cassandra:
     image: cassandra:4.1
     ports:
@@ -37,6 +15,55 @@ services:
       retries: 5
     volumes:
       - cassandra-data:/var/lib/cassandra
+  
+  # Web API Container
+  weather-api:
+    build: ./weather-api
+    env_file:
+      - ./weather-api/.env
+    environment:
+      - NODE_OPTIONS=--dns-result-order=ipv4first
+
+  # Raw Data Consumer Container
+  raw-data-consumer:
+    build: ./raw-data-consumer
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    env_file:
+      - ./raw-data-consumer/.env
+  
+  # Streamlit Dashboard Container
+  streamlit:
+    build: ./streamlit
+    ports:
+      - "8501:8501"
+    depends_on:
+      cassandra:
+        condition: service_healthy
+
+  # zookeeper:
+  #   image: confluentinc/cp-zookeeper:7.5.0
+  #   environment:
+  #     ZOOKEEPER_CLIENT_PORT: 2181
+
+  # kafka:
+  #   image: confluentinc/cp-kafka:7.5.0
+  #   depends_on:
+  #     - zookeeper
+  #   ports:
+  #     - "9092:9092"
+  #   environment:
+  #     KAFKA_BROKER_ID: 1
+  #     KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+  #     KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+  #     KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+  #     KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+  #   healthcheck:
+  #     test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
   
   # Spark Batch Learning Container (For Training Only)
   # spark-batch-learning:
@@ -55,33 +82,15 @@ services:
   #     - "1883:1883"
   #     - "18083:18083"
 
-  mqtt-kafka-bridge:
-    build: ./mqtt-kafka-bridge
-    depends_on:
-      - kafka
-    restart: unless-stopped
-    env_file:
-      - ./mqtt-kafka-bridge/.env
-    environment:
-      - PYTHONUNBUFFERED=1
-
-  raw-data-consumer:
-    build: ./raw-data-consumer
-    depends_on:
-      kafka:
-        condition: service_healthy
-      cassandra:
-        condition: service_healthy
-
-  weather-api:
-    build: ./weather-api
-    depends_on:
-      kafka:
-        condition: service_healthy
-    env_file:
-      - ./weather-api/.env
-    environment:
-      - NODE_OPTIONS=--dns-result-order=ipv4first
+  # mqtt-kafka-bridge:
+  #   build: ./mqtt-kafka-bridge
+  #   depends_on:
+  #     - kafka
+  #   restart: unless-stopped
+  #   env_file:
+  #     - ./mqtt-kafka-bridge/.env
+  #   environment:
+  #     - PYTHONUNBUFFERED=1
 
 volumes:
   cassandra-data:

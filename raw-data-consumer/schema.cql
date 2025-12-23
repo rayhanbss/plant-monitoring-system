@@ -16,12 +16,12 @@ USE plant_monitoring;
 CREATE TABLE IF NOT EXISTS sensor_data (
     device_id text,
     timestamp timestamp,
-    temperature float,
-    humidity float,
-    soil_moisture float,
-    light_level float,
+    temperature double,
+    humidity double,
+    soil_moisture double,
+    light_level double,
     status text,
-    duration float,
+    duration double,
     PRIMARY KEY (device_id, timestamp)
 ) WITH CLUSTERING ORDER BY (timestamp DESC)
 AND default_time_to_live = 2592000;  -- 30 days TTL
@@ -31,9 +31,9 @@ CREATE TABLE IF NOT EXISTS weather_data (
     city_id int,
     timestamp timestamp,
     city_name text,
-    latitude float,
-    longitude float,
-    temperature float,
+    latitude double,
+    longitude double,
+    temperature double,
     weather_condition text,
     weather_description text,
     PRIMARY KEY (city_id, timestamp)

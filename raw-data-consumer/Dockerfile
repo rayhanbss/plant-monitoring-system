@@ -1,10 +1,10 @@
 FROM python:3.11-slim
 
 WORKDIR /app
-COPY consumer.py .
-COPY schema.cql .
 
-RUN pip install kafka-python
+RUN pip install confluent-kafka
 RUN pip install cassandra-driver
+
+COPY . .
 
 CMD ["python", "consumer.py"]

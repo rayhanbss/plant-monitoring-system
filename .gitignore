@@ -5,3 +5,5 @@ venv
 /weather-api/node_modules/
 /weather-api/package-lock.json
 /mqtt-kafka-bridge/.env
+/raw-data-consumer/.env
+/.env

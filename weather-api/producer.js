@@ -5,7 +5,7 @@ dotenv.config();
 
 const kafka = new Kafka({ 
   clientId: 'weather-producer', 
-  brokers: [process.env.KAFKA_BROKER || 'kafka:9092'] 
+  brokers: [process.env.KAFKA_BOOTSTRAP_SERVERS || 'kafka:9092'] 
 });
 
 const producer = kafka.producer();
