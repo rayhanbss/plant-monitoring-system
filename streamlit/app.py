@@ -4,9 +4,13 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.express as px
+import plotly.graph_objects as go
 from cassandra.cluster import Cluster
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from statsmodels.tsa.holtwinters import Holt
+import warnings
+warnings.filterwarnings('ignore')
 
 # Configurations
 CASSANDRA_HOST = "cassandra"
@@ -86,6 +90,215 @@ def get_available_cities():
             cities.append((row.city_name, city_id))
     
     return cities if cities else [("Surakarta", 1625812)]
+
+def train_holt_model(series, damped=True):
+    """
+    Train Holt's Linear Trend model with damped trend option.
+    
+    Args:
+        series: pandas Series with numeric values (must have at least 10 observations)
+        damped: whether to use damped trend (recommended for longer forecasts)
+    
+    Returns:
+        Fitted Holt model
+    """
+    try:
+        # Ensure we have enough data points
+        if len(series) < 10:
+            return None
+        
+        # Remove any remaining NaN values
+        series = series.dropna()
+        
+        if len(series) < 10:
+            return None
+        
+        model = Holt(
+            series,
+            exponential=False,
+            damped_trend=damped,
+            initialization_method='estimated'
+        )
+        model_fit = model.fit(optimized=True)
+        return model_fit
+    except Exception as e:
+        st.warning(f"Model training failed: {str(e)}")
+        return None
+
+
+def prepare_ml_timeseries(df, feature, freq="1s"):
+    """
+    Prepare clean time-series for Holt model.
+    
+    For large datasets (>10000 points), automatically downsample for performance.
+    
+    Args:
+        df: DataFrame with 'timestamp' column and feature column
+        feature: column name to prepare
+        freq: resampling frequency (e.g., '1s', '5s', '1min')
+    
+    Returns:
+        pandas Series ready for Holt model
+    """
+    if df.empty or feature not in df.columns:
+        return pd.Series(dtype=float)
+    
+    # Copy relevant columns
+    ts_df = df[["timestamp", feature]].copy()
+    ts_df = ts_df.dropna()
+    
+    if ts_df.empty:
+        return pd.Series(dtype=float)
+    
+    # Preserve timezone info
+    original_tz = None
+    if ts_df["timestamp"].dt.tz is not None:
+        original_tz = ts_df["timestamp"].dt.tz
+    
+    # Set timestamp as index
+    ts_df = ts_df.set_index("timestamp")
+    
+    # Adaptive resampling based on data size
+    data_points = len(ts_df)
+    
+    if data_points > 50000:
+        # For very large datasets, use 1-minute aggregation
+        actual_freq = "1min"
+    elif data_points > 10000:
+        # For large datasets, use 10-second aggregation
+        actual_freq = "10s"
+    else:
+        actual_freq = freq
+    
+    # Resample and interpolate
+    ts = ts_df[feature].resample(actual_freq).mean()
+    ts = ts.interpolate(method="time")
+    ts = ts.dropna()
+    
+    # Restore timezone if it was present
+    if original_tz is not None and ts.index.tz is None:
+        ts.index = ts.index.tz_localize(original_tz)
+    
+    return ts
+
+
+def forecast_holt(model_fit, steps):
+    """
+    Generate forecast from fitted Holt model.
+    
+    Args:
+        model_fit: Fitted Holt model
+        steps: Number of steps to forecast
+    
+    Returns:
+        pandas Series with forecasted values
+    """
+    if model_fit is None:
+        return pd.Series(dtype=float)
+    
+    try:
+        forecast = model_fit.forecast(steps)
+        return forecast
+    except Exception as e:
+        st.warning(f"Forecast failed: {str(e)}")
+        return pd.Series(dtype=float)
+
+
+def get_holt_model_summary(model_fit):
+    """
+    Extract key parameters from fitted Holt model.
+    
+    Returns:
+        dict with model parameters
+    """
+    if model_fit is None:
+        return {}
+    
+    try:
+        return {
+            "smoothing_level": model_fit.params.get('smoothing_level', None),
+            "smoothing_trend": model_fit.params.get('smoothing_trend', None),
+            "damping_trend": model_fit.params.get('damping_trend', None),
+            "aic": model_fit.aic if hasattr(model_fit, 'aic') else None,
+            "bic": model_fit.bic if hasattr(model_fit, 'bic') else None,
+            "sse": model_fit.sse if hasattr(model_fit, 'sse') else None,
+        }
+    except:
+        return {}
+
+
+def run_multi_feature_forecast(df, features, horizon_steps, freq="1s"):
+    """
+    Run Holt forecast for multiple features.
+    
+    Args:
+        df: DataFrame with sensor data
+        features: list of feature names to forecast
+        horizon_steps: number of steps to forecast
+        freq: resampling frequency
+    
+    Returns:
+        dict with forecast results for each feature
+    """
+    results = {}
+    
+    for feature in features:
+        # Prepare time series
+        ts = prepare_ml_timeseries(df, feature, freq)
+        
+        if len(ts) < 10:
+            results[feature] = {
+                "success": False,
+                "error": "Insufficient data points (need at least 10)",
+                "historical": ts,
+                "forecast": pd.Series(dtype=float),
+                "model_params": {}
+            }
+            continue
+        
+        # Train model
+        model_fit = train_holt_model(ts)
+        
+        if model_fit is None:
+            results[feature] = {
+                "success": False,
+                "error": "Model training failed",
+                "historical": ts,
+                "forecast": pd.Series(dtype=float),
+                "model_params": {}
+            }
+            continue
+        
+        # Generate forecast
+        forecast = forecast_holt(model_fit, horizon_steps)
+        
+        # Create forecast index (future timestamps) - preserve timezone
+        last_timestamp = ts.index[-1]
+        freq_td = pd.Timedelta(ts.index[-1] - ts.index[-2]) if len(ts) > 1 else pd.Timedelta(seconds=1)
+        
+        # Create forecast index with same timezone as historical data
+        forecast_index = pd.date_range(
+            start=last_timestamp + freq_td,
+            periods=horizon_steps,
+            freq=freq_td,
+            tz=ts.index.tz  # Preserve timezone from historical data
+        )
+        forecast.index = forecast_index
+        
+        results[feature] = {
+            "success": True,
+            "error": None,
+            "historical": ts,
+            "forecast": forecast,
+            "model_params": get_holt_model_summary(model_fit),
+            "last_value": ts.iloc[-1],
+            "forecast_start": forecast.iloc[0] if len(forecast) > 0 else None,
+            "forecast_end": forecast.iloc[-1] if len(forecast) > 0 else None,
+            "trend_direction": "up" if (len(forecast) > 0 and forecast.iloc[-1] > ts.iloc[-1]) else "down"
+        }
+    
+    return results
+
 
 def fetch_sensor_data(device_id, start_time=None, end_time=None, limit=100000):
     if start_time and end_time:
@@ -287,12 +500,30 @@ def fetch_all_data_parallel(device_id, city_id, start_time, end_time, range_opti
     
     return sensor_df, weather_df, resample_rule
 
+st.sidebar.markdown("## Forecast Configuration")
+
+forecast_feature = st.sidebar.multiselect(
+    "Select Features to Forecast",
+    ["duration", "temperature", "humidity", "soil_moisture", "light_level"],
+    default=["duration"]
+)
+
+forecast_horizon = st.sidebar.slider(
+    "Forecast Horizon (seconds)",
+    min_value=10,
+    max_value=600,
+    value=60,
+    step=10
+)
+
+run_forecast = st.sidebar.button("Run Forecast")
+
 #  Sidebar - Filters
 st.sidebar.markdown("### Configuration")
 
 view_option = st.sidebar.selectbox(
     "View Mode",
-    ["Dashboard", "Sensor Data Analysis", "Weather Data Analysis"],
+    ["Dashboard", "Sensor Data Analysis", "Weather Data Analysis", "ML Forecast"],
     index=0
 )
 
@@ -714,7 +945,307 @@ elif view_option == "Weather Data Analysis":
     else:
         st.info("No weather data available for the selected time range.")
 
+elif view_option == "ML Forecast":
+    # ML Forecast View - Holt's Exponential Smoothing
+    st.markdown("### ML Forecast - Holt's Exponential Smoothing")
+    
+    st.markdown("""
+    **Holt's Linear Trend Method** (Double Exponential Smoothing) is used to forecast 
+    time series data that exhibits a trend. This method uses two smoothing equations:
+    - **Level equation**: captures the base value of the series
+    - **Trend equation**: captures the trend (slope) of the series
+    
+    The damped trend variant is used to prevent forecasts from trending indefinitely.
+    """)
+    
+    st.markdown("---")
+    
+    if sensor_df.empty:
+        st.warning("No sensor data available for forecasting. Please check your data source.")
+    else:
+        # Data Overview
+        st.markdown("#### Data Overview")
+        data_cols = st.columns(4)
+        
+        data_cols[0].metric("Total Data Points", f"{len(sensor_df):,}")
+        data_cols[1].metric("Time Range", f"{(sensor_df['timestamp'].max() - sensor_df['timestamp'].min()).days} days")
+        data_cols[2].metric("Selected Features", len(forecast_feature))
+        data_cols[3].metric("Forecast Horizon", f"{forecast_horizon} steps")
+        
+        st.markdown("---")
+        
+        # Run Forecast Button Logic
+        if run_forecast and len(forecast_feature) > 0:
+            with st.spinner("Training models and generating forecasts..."):
+                # Determine appropriate frequency based on data
+                data_points = len(sensor_df)
+                if data_points > 50000:
+                    resample_freq = "1min"
+                    freq_label = "1 minute"
+                elif data_points > 10000:
+                    resample_freq = "10s"
+                    freq_label = "10 seconds"
+                else:
+                    resample_freq = "1s"
+                    freq_label = "1 second"
+                
+                st.info(f"Using {freq_label} resolution for {data_points:,} data points")
+                
+                # Run forecast for all selected features
+                forecast_results = run_multi_feature_forecast(
+                    sensor_df, 
+                    forecast_feature, 
+                    forecast_horizon,
+                    freq=resample_freq
+                )
+                
+                # Store results in session state
+                st.session_state['forecast_results'] = forecast_results
+                st.session_state['forecast_timestamp'] = datetime.now(LOCAL_TZ)
+        
+        # Display Results if available
+        if 'forecast_results' in st.session_state and st.session_state['forecast_results']:
+            forecast_results = st.session_state['forecast_results']
+            forecast_time = st.session_state.get('forecast_timestamp', datetime.now(LOCAL_TZ))
+            
+            st.success(f"Forecast generated at {forecast_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            # Feature unit mapping
+            unit_map = {
+                "duration": "seconds",
+                "temperature": "°C",
+                "humidity": "%",
+                "soil_moisture": "%",
+                "light_level": "lux"
+            }
+            
+            color_map = {
+                "duration": "#27ae60",
+                "temperature": "#e74c3c",
+                "humidity": "#3498db",
+                "soil_moisture": "#9b59b6",
+                "light_level": "#f39c12"
+            }
+            
+            # Display each feature forecast
+            for feature, result in forecast_results.items():
+                st.markdown(f"---")
+                st.markdown(f"#### {feature.replace('_', ' ').title()} Forecast")
+                
+                if not result["success"]:
+                    st.error(f"Forecast failed: {result['error']}")
+                    continue
+                
+                # Metrics Row
+                metrics_cols = st.columns(5)
+                
+                unit = unit_map.get(feature, "")
+                color = color_map.get(feature, "#27ae60")
+                
+                last_val = result["last_value"]
+                forecast_start = result["forecast_start"]
+                forecast_end = result["forecast_end"]
+                trend = result["trend_direction"]
+                
+                metrics_cols[0].metric(
+                    "Last Observed Value",
+                    f"{last_val:.2f} {unit}"
+                )
+                metrics_cols[1].metric(
+                    "Forecast Start",
+                    f"{forecast_start:.2f} {unit}" if forecast_start else "N/A"
+                )
+                metrics_cols[2].metric(
+                    "Forecast End",
+                    f"{forecast_end:.2f} {unit}" if forecast_end else "N/A",
+                    delta=f"{(forecast_end - last_val):.2f}" if forecast_end else None,
+                    delta_color="normal"
+                )
+                metrics_cols[3].metric(
+                    "Trend Direction",
+                    "Upward" if trend == "up" else "Downward"
+                )
+                metrics_cols[4].metric(
+                    "Historical Points",
+                    f"{len(result['historical']):,}"
+                )
+                
+                # Plot: Historical + Forecast
+                fig = go.Figure()
+                
+                # Historical data (last 500 points for visualization)
+                hist_data = result["historical"].tail(500)
+                fig.add_trace(go.Scatter(
+                    x=hist_data.index,
+                    y=hist_data.values,
+                    mode='lines',
+                    name='Historical',
+                    line=dict(color=color, width=2)
+                ))
+                
+                # Forecast data - connect from last historical point
+                forecast_data = result["forecast"]
+                
+                # Create connected forecast (start from last historical point)
+                last_hist_time = hist_data.index[-1]
+                last_hist_value = hist_data.values[-1]
+                
+                # Prepend the last historical point to forecast for seamless connection
+                connected_forecast_index = pd.Index([last_hist_time]).append(forecast_data.index)
+                connected_forecast_values = np.concatenate([[last_hist_value], forecast_data.values])
+                
+                fig.add_trace(go.Scatter(
+                    x=connected_forecast_index,
+                    y=connected_forecast_values,
+                    mode='lines+markers',
+                    name='Forecast',
+                    line=dict(color='#e74c3c', width=3, dash='dash'),
+                    marker=dict(size=6)
+                ))
+                
+                # Add vertical line at forecast start using add_shape (avoids timestamp annotation issue)
+                forecast_start_time = hist_data.index[-1]
+                fig.add_shape(
+                    type="line",
+                    x0=forecast_start_time,
+                    x1=forecast_start_time,
+                    y0=0,
+                    y1=1,
+                    yref="paper",
+                    line=dict(color="gray", width=2, dash="dot")
+                )
+                
+                # Add annotation separately
+                fig.add_annotation(
+                    x=forecast_start_time,
+                    y=1,
+                    yref="paper",
+                    text="Forecast Start",
+                    showarrow=False,
+                    font=dict(size=10, color="gray"),
+                    yanchor="bottom"
+                )
+                
+                fig.update_layout(
+                    title=f"{feature.replace('_', ' ').title()} - Historical vs Forecast",
+                    xaxis_title="Time",
+                    yaxis_title=f"{feature.replace('_', ' ').title()} ({unit})",
+                    hovermode='x unified',
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=1
+                    ),
+                    margin=dict(l=0, r=0, t=60, b=0)
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Model Parameters (Expandable)
+                with st.expander(f"Model Parameters for {feature.replace('_', ' ').title()}"):
+                    params = result["model_params"]
+                    if params:
+                        param_cols = st.columns(3)
+                        
+                        param_cols[0].metric(
+                            "Smoothing Level (α)",
+                            f"{params.get('smoothing_level', 0):.4f}" if params.get('smoothing_level') else "N/A",
+                            help="Controls weight of recent observations on level"
+                        )
+                        param_cols[1].metric(
+                            "Smoothing Trend (β)",
+                            f"{params.get('smoothing_trend', 0):.4f}" if params.get('smoothing_trend') else "N/A",
+                            help="Controls weight of recent observations on trend"
+                        )
+                        param_cols[2].metric(
+                            "Damping Factor (φ)",
+                            f"{params.get('damping_trend', 0):.4f}" if params.get('damping_trend') else "N/A",
+                            help="Dampens the trend over time (prevents runaway forecasts)"
+                        )
+                        
+                        st.markdown("**Model Fit Statistics:**")
+                        stats_cols = st.columns(3)
+                        stats_cols[0].write(f"AIC: {params.get('aic', 'N/A'):.2f}" if params.get('aic') else "AIC: N/A")
+                        stats_cols[1].write(f"BIC: {params.get('bic', 'N/A'):.2f}" if params.get('bic') else "BIC: N/A")
+                        stats_cols[2].write(f"SSE: {params.get('sse', 'N/A'):.2f}" if params.get('sse') else "SSE: N/A")
+                    else:
+                        st.info("No model parameters available")
+                
+                # Forecast Data Table (Expandable)
+                with st.expander(f"Forecast Data Table for {feature.replace('_', ' ').title()}"):
+                    forecast_df = pd.DataFrame({
+                        'Timestamp': forecast_data.index,
+                        f'{feature.replace("_", " ").title()} ({unit})': forecast_data.values
+                    })
+                    forecast_df['Timestamp'] = forecast_df['Timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
+                    st.dataframe(forecast_df, use_container_width=True)
+            
+            st.markdown("---")
+            
+            # Combined Forecast Comparison (if multiple features)
+            if len(forecast_results) > 1:
+                st.markdown("#### Combined Forecast Comparison")
+                
+                # Normalize values for comparison
+                fig_combined = go.Figure()
+                
+                for feature, result in forecast_results.items():
+                    if result["success"]:
+                        # Normalize forecast values (0-100 scale)
+                        forecast_data = result["forecast"]
+                        if len(forecast_data) > 0:
+                            min_val = forecast_data.min()
+                            max_val = forecast_data.max()
+                            if max_val - min_val > 0:
+                                normalized = (forecast_data - min_val) / (max_val - min_val) * 100
+                            else:
+                                normalized = forecast_data * 0 + 50
+                            
+                            fig_combined.add_trace(go.Scatter(
+                                x=forecast_data.index,
+                                y=normalized.values,
+                                mode='lines+markers',
+                                name=feature.replace('_', ' ').title(),
+                                line=dict(width=2)
+                            ))
+                
+                fig_combined.update_layout(
+                    title="Normalized Forecast Comparison (0-100 scale)",
+                    xaxis_title="Time",
+                    yaxis_title="Normalized Value",
+                    hovermode='x unified',
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=1
+                    ),
+                    margin=dict(l=0, r=0, t=60, b=0)
+                )
+                
+                st.plotly_chart(fig_combined, use_container_width=True)
+        
+        else:
+            st.info("Select features and click **Run Forecast** to generate predictions")
+            
+            # Show data distribution preview
+            st.markdown("#### Current Data Distribution")
+            
+            available_features = ["duration", "temperature", "humidity", "soil_moisture", "light_level"]
+            preview_cols = st.columns(len(available_features))
+            
+            for col, feature in zip(preview_cols, available_features):
+                if feature in sensor_df.columns:
+                    col.metric(
+                        feature.replace('_', ' ').title(),
+                        f"{sensor_df[feature].mean():.2f}",
+                        help=f"Min: {sensor_df[feature].min():.2f} | Max: {sensor_df[feature].max():.2f}"
+                    )
+
 # AUTO REFRESH
 if auto_refresh:
     time.sleep(refresh_interval)
-    st.rerun()
+    st.experimental_rerun()

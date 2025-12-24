@@ -45,7 +45,7 @@ time.sleep(5)
 # Kafka Consumer configuration
 consumer = Consumer({
     'bootstrap.servers': os.getenv('KAFKA_BOOTSTRAP_SERVERS'),
-    'group.id': 'sensor-data-v2',
+    'group.id': 'sensor-data-v100',
     'auto.offset.reset': 'earliest',
     'broker.address.family': 'v4',
     'client.id': 'public-consumer-1',
